@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  
+  push:
+  workflow_dispatch:
+  
+jobs:
+  
+  build:
+    
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Descarga repositorio
+        uses: actions/checkout@v3
+
+      - name: Compilacion JAVA
+        run: |
+          chmod +x gradlew
+          ./gradlew build
+      
+      #- name: Setup Java JDK
+        #uses: actions/setup-java@v4.0.0
+        #with: 
+          #java-version: 17
+          #distribution: 'temurin'
+    
+      #- name: Static Application Security Testing
+        #run: |
+          #chmod +x gradlew 
+          #./gradlew sonar -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+          
+      - name: Copia de Jar a Raiz de proyecto
+        run: |
+          cp $GITHUB_WORKSPACE/build/libs/spring-petclinic-2.6.0.jar .
+          chmod 777 spring-petclinic-2.6.0.jar
+          ls -ltra
+          
+      - name: Dependency Check
+        uses: dependency-check/Dependency-Check_Action@1.1.0
+        with:
+          project: 'pet-clinic'
+          path: '.'
+          format: 'HTML' 
+      
+      - name: Upload Test results
+        uses: actions/upload-artifact@master
+        with:
+           name: Depcheck report
+           path: ${{github.workspace}}/reports
+
+      - name: Docker Login
+        uses: docker/login-action@v3.0.0
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Build Docker
+        run: |
+          docker build --tag clagosu/pet-clinic:latest .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'clagosu/pet-clinic:latest'
+          format: 'table'
+          #exit-code: 1 PARAMETRO PARA QUIEBRE DE PIPELINE 
+      
+      - name: Push Docker
+        run: | 
+          docker push clagosu/pet-clinic
+          
+      
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    
+    steps:
+
+    - name: Pull de la Imagen Docker
+      run: |
+        docker pull clagosu/pet-clinic:latest
+
+    - name: Despliegue Aplicaion
+      run: |
+        docker run -p 8085:8085 --name pet-clinic-deploy -d clagosu/pet-clinic:latest
+
+    - name: Sleep
+      run: | 
+        sleep 30
+
+    - name: OWASP ZAP Scan
+      uses: zaproxy/action-baseline@v0.11.0
+      with:
+        target: 'http://localhost:8085/'
